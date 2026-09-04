@@ -1,0 +1,169 @@
+model:
+  class_path: pvs_scoring.lightning_modules.classifier.Classifier
+  init_args:
+    network:
+      class_path: pvs_scoring.lightning_modules.resnet.ResNetClassifier
+      init_args:
+        block: basic
+        n_input_channels: 5
+        layers: [1,2,2,4]
+        block_inplanes: [32,64,128,256]
+        norm: [group, {num_groups: 8}]
+        fc_num_classes: [3,3]
+        no_max_pool: true
+        conv1_t_sizes: [1,3,7]
+    loss_fn: 
+      - class_path: pvs_scoring.lightning_modules.losses.MyCrossEntropyLoss
+        init_args:
+          weight: [0.44025571, 0.7285922 , 1.83115208]
+          reduction: none 
+          label_smoothing: 0.1
+      - class_path: pvs_scoring.lightning_modules.losses.MyCrossEntropyLoss
+        init_args:
+          weight: [1.25689848, 0.69081443, 1.0522871]
+          reduction: none 
+          label_smoothing: 0.1
+    metric: 
+      class_path: pvs_scoring.lightning_modules.metrics.ClassifierValMetric
+    watch_log_freq: 100
+    dir_pred: results_new/classifier_all/classifier_s1
+data:
+  class_path: pvs_scoring.data_modules.base.Base
+  init_args:
+    data_dir: data_new
+    train_csv: data_new/splits/train.csv
+    val_csv: data_new/splits/val.csv
+    # pred_csv: data_new/splits/test.csv
+    pred_csv: data_new/metadata.csv
+    transforms_train:
+      class_path: torchio.transforms.Compose
+      init_args:
+        transforms:
+          - class_path: pvs_scoring.data_modules.transforms.CopyAnyAffine
+          - class_path: pvs_scoring.data_modules.transforms.MyToCanonical
+          - class_path: torchio.transforms.RescaleIntensity
+          - class_path: torchio.transforms.Resample
+            init_args:
+              target: 1.0
+          - class_path: pvs_scoring.data_modules.transforms.MyEnsureShapeMultiple
+            init_args:
+              target_multiple: 32
+          - class_path: pvs_scoring.data_modules.transforms.MyRandomAffine
+            init_args:
+              p: 1.0
+              scales: [0.9, 1.1]
+              scales_are_spacings: false
+              degrees: 90
+              update_affine: false
+              isotropic: true
+          - class_path: torchio.transforms.RandomNoise
+            init_args:
+              p: 0.15
+              mean: 0
+              std: [0, 0.316]
+          - class_path: torchio.transforms.RandomBlur
+            init_args:
+              p: 0.1
+              std: [0.5, 1.5]
+          - class_path: pvs_scoring.data_modules.transforms.Brightness
+            init_args:
+              p: 0.15
+              rng: [0.7, 1.3]
+          - class_path: pvs_scoring.data_modules.transforms.Contrast
+            init_args:
+              p: 0.15
+              rng: [0.65, 1.5]
+          - class_path: torchio.transforms.RandomAnisotropy
+            init_args:
+              p: 0.25
+              axes: 2
+              downsampling: [1, 2]
+          - class_path: pvs_scoring.data_modules.transforms.Gamma
+            init_args:
+              p: 0.15
+              rng: [0.7, 1.5]
+          - class_path: torchio.transforms.RandomFlip
+            init_args:
+              p: 0.5
+              axes: [0, 1, 2]
+          - class_path: pvs_scoring.data_modules.transforms.MyRescaleIntensity
+            init_args:
+              percentiles: [2.0, 98.0]
+              masking_method: BRAIN
+    transforms_predict: 
+      class_path: torchio.transforms.Compose
+      init_args:
+        transforms:
+          - class_path: pvs_scoring.data_modules.transforms.CopyAnyAffine
+          - class_path: pvs_scoring.data_modules.transforms.MyToCanonical
+            init_args:
+              exclude: [PVS]
+          - class_path: pvs_scoring.data_modules.transforms.ResampleWithinRange
+            init_args:
+              target: [0.9, 1.1]
+              resample_kwargs:
+                scalars_only: false
+                exclude: [PVS]
+          - class_path: pvs_scoring.data_modules.transforms.MyEnsureShapeMultiple
+            init_args:
+              target_multiple: 32
+              exclude: [PVS]
+          - class_path: pvs_scoring.data_modules.transforms.MyRescaleIntensity
+            init_args:
+              percentiles: [2.0, 98.0]
+              masking_method: BRAIN
+    sequences: [T1w, T2w, FLAIR]
+    input_masks: [BG, CSO]
+    mask_only_frac: 0.0
+    score_only_frac: 1.0
+    num_workers: 8
+    batch_size: 1
+optimizer:
+  class_path: "torch.optim.AdamW"
+trainer:
+  accumulate_grad_batches: 220
+  gradient_clip_val: 0.5
+  logger:
+    class_path: pytorch_lightning.loggers.WandbLogger
+    init_args:
+      project: PVS_SCORING_new
+      log_model: false
+      save_dir: logs_new/classifier/images_s1
+      name: images_s1
+  accelerator: gpu
+  devices: [0]
+  precision: bf16-mixed
+  max_epochs: 1000
+  check_val_every_n_epoch: 10
+  num_sanity_val_steps: 0
+  log_every_n_steps: null
+  callbacks:
+    - class_path: pytorch_lightning.callbacks.LearningRateMonitor
+      init_args:
+        logging_interval: epoch
+    - class_path: pvs_scoring.lightning_modules.callbacks.TimeIteration
+    - class_path: pytorch_lightning.callbacks.ModelCheckpoint
+      init_args:
+        filename: best_epoch={epoch}-AP={AP}
+        auto_insert_metric_name: false
+        monitor: AP
+        mode: max
+        every_n_epochs: ${trainer.check_val_every_n_epoch}
+        save_on_train_epoch_end: true
+    - class_path: pytorch_lightning.callbacks.ModelCheckpoint
+      init_args:
+        filename: best_epoch={epoch}-F1={F1}
+        auto_insert_metric_name: false
+        monitor: F1
+        mode: max
+        every_n_epochs: ${trainer.check_val_every_n_epoch}
+        save_on_train_epoch_end: true
+    - class_path: pytorch_lightning.callbacks.ModelCheckpoint
+      init_args:
+        filename: final_epoch={epoch}
+        auto_insert_metric_name: false
+        monitor: epoch
+        mode: max
+        every_n_epochs: ${trainer.check_val_every_n_epoch}
+        save_on_train_epoch_end: true
+seed_everything: 1

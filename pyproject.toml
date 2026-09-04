@@ -1,0 +1,10 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pvs_scoring" # this does not need to be the same as the repo name, it is the name that pip installs it has (e.g. to remove: pip uninstall project_name)
+version = "0.0.1"
+
+[project.scripts]
+pvs_scoring_cli = "pvs_scoring.run:main"
